@@ -14,6 +14,7 @@ import { find, get, includes, isEmpty } from 'lodash';
  * Internal dependencies
  */
 import ActivityLogBanner from 'my-sites/stats/activity-log-banner';
+import ActivityLogSearch from 'my-sites/stats/activity-log-search';
 import ActivityLogItem from '../activity-log-item';
 import ActivityLogSwitch from '../activity-log-switch';
 import ActivityLogTasklist from '../activity-log-tasklist';
@@ -414,6 +415,7 @@ class ActivityLog extends Component {
 					noLogsContent
 				) : (
 					<div>
+						<ActivityLogSearch />
 						<section className="activity-log__wrapper">
 							{ theseLogs.map( log => (
 								<Fragment key={ log.activityId }>
