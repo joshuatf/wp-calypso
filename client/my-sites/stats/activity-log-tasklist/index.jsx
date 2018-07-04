@@ -52,21 +52,24 @@ class ActivityLogTasklist extends Component {
 		siteSlug: PropTypes.string,
 		plugins: PropTypes.arrayOf( PropTypes.object ), // Plugins updated and those with pending updates
 		themes: PropTypes.arrayOf( PropTypes.object ), // Themes to update
-		core: PropTypes.object, // New WP core version
+		core: PropTypes.arrayOf( PropTypes.object ), // New WP core version
 
 		// Connected props
 		siteName: PropTypes.string.isRequired,
 		trackUpdateAll: PropTypes.func.isRequired,
 		goToPage: PropTypes.func.isRequired,
 		updateSingle: PropTypes.func.isRequired,
-
-		// Plugins already updated + those with pending updates.
-		// This extends plugins with the plugin update status.
-		pluginsWithUpdate: PropTypes.arrayOf( PropTypes.object ).isRequired,
 		trackUpdate: PropTypes.func.isRequired,
 		trackUpdateFromError: PropTypes.func.isRequired,
 		trackDismissAll: PropTypes.func.isRequired,
 		trackDismiss: PropTypes.func.isRequired,
+
+		// WordPress core
+		coreWithUpdate: PropTypes.arrayOf( PropTypes.object ).isRequired,
+
+		// Plugins already updated + those with pending updates.
+		// This extends plugins with the plugin update status.
+		pluginsWithUpdate: PropTypes.arrayOf( PropTypes.object ).isRequired,
 		goManagePlugins: PropTypes.func.isRequired,
 
 		// Themes
@@ -290,9 +293,13 @@ class ActivityLogTasklist extends Component {
 	}
 
 	render() {
-		const itemsToUpdate = union( this.props.pluginsWithUpdate, this.props.themesWithUpdate ).filter(
-			item => ! includes( this.state.dismissed, item.slug )
-		);
+		console.log( this.props.coreWithUpdate );
+		const itemsToUpdate = union(
+			this.props.coreWithUpdate,
+			this.props.pluginsWithUpdate,
+			this.props.themesWithUpdate
+		).filter( item => ! includes( this.state.dismissed, item.slug ) );
+
 		if ( isEmpty( itemsToUpdate ) ) {
 			return null;
 		}
@@ -343,33 +350,75 @@ class ActivityLogTasklist extends Component {
 				</div>
 				{ // Show if plugin update didn't start, is still running or errored,
 				// but hide plugin if it was updated successfully.
-				itemsToUpdate.map( item => (
-					<ActivityLogTaskUpdate
-						key={ item.slug }
-						toUpdate={ item }
-						name={ item.name }
-						slug={ item.slug }
-						version={ item.version }
-						type={ item.type }
-						updateType={
-							'plugin' === item.type
-								? translate( 'Plugin update available' )
-								: translate( 'Theme update available' )
-						}
-						goToPage={ this.goToPage }
-						enqueue={ this.enqueue }
-						dismiss={ this.dismiss }
-						disable={ isItemEnqueued( item.slug, queued ) }
-					/>
-				) ) }
+				itemsToUpdate.map( item => {
+					let updateType = translate( 'Plugin update available' );
+					if ( 'theme' === item.type ) {
+						updateType = translate( 'Theme update available' );
+					} else if ( 'core' === item.type ) {
+						updateType = translate( 'Core update available' );
+					}
+					return (
+						<ActivityLogTaskUpdate
+							key={ item.slug }
+							toUpdate={ item }
+							name={ item.name }
+							slug={ item.slug }
+							version={ item.version }
+							type={ item.type }
+							updateType={ updateType }
+							goToPage={ this.goToPage }
+							enqueue={ this.enqueue }
+							dismiss={ this.dismiss }
+							disable={ isItemEnqueued( item.slug, queued ) }
+						/>
+					);
+				} ) }
 			</Card>
 		);
 	}
 }
 
 /**
+ * Normalizes the state result so it's the same than plugins.
+ * This normalization allows to reuse methods for plugins, themes, and core.
+ *
+ * @param {string} state            Current state of update progress.
+ * @param {bool}   isUpdateComplete If update actually produced what is expected to be after a successful update.
+ *                                  In themes, the 'update' prop of the theme object is nullified when an update is succesful.
+ *
+ * @returns {bool|object} False is update hasn't started. One of 'inProgress', 'error', 'completed', when
+ * the update is running, failed, or was successfully completed, respectively.
+ */
+const getNormalizedStatus = ( state, isUpdateComplete ) => {
+	if ( 'pending' === state ) {
+		return { status: 'inProgress' };
+	}
+	if ( 'failure' === state ) {
+		return { status: 'error' };
+	}
+	if ( 'success' === state ) {
+		if ( isUpdateComplete ) {
+			return { status: 'completed' };
+		}
+		return { status: 'error' };
+	}
+	return false;
+};
+
+/**
+ * Get data about the status of a core update.
+ * @param {number} siteId  Site Id.
+ * @returns {bool|Object} Status of update progress, normalized to a standard.
+ */
+const getStatusForCore = siteId => {
+	const httpData = getHttpData( `core-update-${ siteId }` );
+	const isCoreUpdateComplete = false;
+	console.log( httpData );
+	return getNormalizedStatus( httpData.state, isCoreUpdateComplete );
+};
+
+/**
  * Converts statuses for network request for theme update into something matching the plugin update.
- * This normalization allows to reuse methods for both plugins and themes.
  *
  * @param {number} siteId  Site Id.
  * @param {string} themeId Theme slug.
@@ -378,22 +427,10 @@ class ActivityLogTasklist extends Component {
  * the update is running, failed, or was successfully completed, respectively.
  */
 const getStatusForTheme = ( siteId, themeId ) => {
-	const themeHttpData = getHttpData( `theme-update-${ siteId }-${ themeId }` );
-	const { state } = themeHttpData;
-	if ( 'pending' === state ) {
-		return { status: 'inProgress' };
-	}
-	if ( 'failure' === state ) {
-		return { status: 'error' };
-	}
-	if ( 'success' === state ) {
-		// When a theme successfully updates, the theme 'update' property is nullified.
-		if ( null === get( themeHttpData, 'data.themes.0.update' ) ) {
-			return { status: 'completed' };
-		}
-		return { status: 'error' };
-	}
-	return false;
+	const httpData = getHttpData( `theme-update-${ siteId }-${ themeId }` );
+	// When a theme successfully updates, the theme 'update' property is nullified.
+	const isThemeUpdateComplete = null === get( httpData, 'data.themes.0.update' );
+	return getNormalizedStatus( httpData.state, isThemeUpdateComplete );
 };
 
 /**
@@ -445,7 +482,7 @@ const updateTheme = ( siteId, themeId ) =>
 		}
 	);
 
-const mapStateToProps = ( state, { siteId, plugins, themes } ) => {
+const mapStateToProps = ( state, { siteId, plugins, themes, core } ) => {
 	const site = getSite( state, siteId );
 	return {
 		siteId,
@@ -453,6 +490,12 @@ const mapStateToProps = ( state, { siteId, plugins, themes } ) => {
 		siteName: site.name,
 		pluginsWithUpdate: makeUpdatableList( plugins, siteId, state ),
 		themesWithUpdate: makeUpdatableList( themes, siteId ),
+		coreWithUpdate: isEmpty( core )
+			? []
+			: {
+					...core,
+					updateStatus: getStatusForCore( siteId ),
+			  },
 	};
 };
 

@@ -87,7 +87,16 @@ export const requestSiteAlerts = siteId => {
 								type: theme.type,
 								version: theme.version,
 							} ) ),
-							core: updates.core,
+							core: updates.core.version
+								? [
+										{
+											name: 'WordPress',
+											slug: 'wordpress',
+											type: 'core',
+											version: updates.core.version,
+										},
+								  ]
+								: [],
 						},
 					},
 				],
